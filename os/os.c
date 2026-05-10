@@ -107,6 +107,7 @@ void run() {
     input(&inbuf);
     uart_send_str("\r\n");
     bmp280_read_temp();
+  }
 }
 
 void handle_input(entity_id eid, input_buffer *buf) {
