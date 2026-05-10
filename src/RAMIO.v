@@ -52,8 +52,10 @@
       // I2C
       reg [7:0] i2c_data_reg;
       reg       i2c_start_en;
+      reg       i2c_read_en;
       wire      i2c_busy;
       wire      i2c_done;
+      wire [7:0] i2c_data_out;
       // write
       reg [1:0] addr_lower_w;
 
@@ -141,7 +143,11 @@
         end 
         // --- THÊM I2C CONTROL/STATUS TẠI ĐÂY ---
         else if (addrA_prev == ADDR_I2C_CTRL && reA_prev == 3'b001) begin
-          doutA = {{30{1'b0}}, i2c_done, i2c_busy};
+          doutA = {{28{1'b0}}, i2c_done, i2c_busy, 1'b0, i2c_read_en};
+        end
+        // --- THÊM I2C READ DATA TẠI ĐÂY ---
+        else if (addrA_prev == ADDR_I2C_DATA && reA_prev == 3'b001 && i2c_read_en) begin
+          doutA = {{24{1'b0}}, i2c_data_out};
         end 
         // ----------------------------
         else begin
@@ -199,7 +205,10 @@
             i2c_data_reg <= dinA[7:0];
           end
           if (addrA == ADDR_I2C_CTRL && weA == 2'b01) begin
-            i2c_start_en <= dinA[0]; 
+            if (dinA[0]) begin
+              i2c_start_en <= 1'b1;
+              i2c_read_en <= dinA[1];
+            end
           end
           led[5] <= uart_tx;
           led[4] <= uart_rx;
@@ -281,13 +290,15 @@
       ) i2c_inst (
         .clk(clk),
         .rst(rst),
-        .slave_addr(7'h76),      // BMP280 I2C address
+        .slave_addr(7'h76),
         .data_in(i2c_data_reg),
         .start_en(i2c_start_en),
+        .read_en(i2c_read_en),
         .sda(i2c_sda),
         .scl(i2c_scl),
         .busy(i2c_busy),
-        .done(i2c_done)
+        .done(i2c_done),
+        .data_out(i2c_data_out)
       );
     endmodule
 

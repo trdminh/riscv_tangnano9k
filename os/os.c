@@ -23,6 +23,7 @@ char uart_read_char();
 void uart_send_hex_byte(char ch);
 void uart_send_hex_nibble(char nibble);
 void i2c_send(unsigned char data);
+unsigned char i2c_read(unsigned char reg_addr);
 unsigned char i2c_is_busy();
 unsigned char i2c_is_done();
 void bmp280_init();
@@ -515,6 +516,17 @@ void i2c_send(unsigned char data) {
   while (i2c_is_busy());
 }
 
+unsigned char i2c_read(unsigned char reg_addr) {
+  *i2c_data = reg_addr;
+  *i2c_ctrl = 0x01;
+  while (i2c_is_busy());
+
+  *i2c_ctrl = 0x03;
+  while (i2c_is_busy());
+
+  return *i2c_data;
+}
+
 unsigned char i2c_is_busy() {
   return (*i2c_ctrl & 0x01);
 }
@@ -561,19 +573,44 @@ void bmp280_read_temp() {
 
   uart_send_str("Sensor Address: 0x");
   uart_send_hex_byte(BMP280_ADDR);
-  uart_send_str("\r\n");
-
-  i2c_send(BMP280_REG_TEMP_MSB);
-  delay_ms(50);
-
-  int temperature = 2500;
-  int pressure = 101325;
-
-  uart_send_str("Register: 0x");
-  uart_send_hex_byte(BMP280_REG_TEMP_MSB);
   uart_send_str("\r\n\r\n");
 
-  print_temperature(temperature);
+  unsigned char temp_msb = i2c_read(BMP280_REG_TEMP_MSB);
+  delay_ms(10);
+  unsigned char temp_lsb = i2c_read(BMP280_REG_TEMP_MSB + 1);
+  delay_ms(10);
+  unsigned char temp_xlsb = i2c_read(BMP280_REG_TEMP_MSB + 2);
+  delay_ms(10);
+
+  int adc_temp = ((int)temp_msb << 12) | ((int)temp_lsb << 4) | ((int)temp_xlsb >> 4);
+
+  int temp_c = 25;
+  if (adc_temp < 0x80000) {
+    temp_c = (adc_temp >> 8);
+  } else {
+    temp_c = -((0x100000 - adc_temp) >> 8);
+  }
+
+  int temp_val = (temp_c * 100) + ((adc_temp & 0xFF) / 2);
+
+  uart_send_str("Raw ADC: 0x");
+  uart_send_hex_byte((adc_temp >> 16) & 0xFF);
+  uart_send_hex_byte((adc_temp >> 8) & 0xFF);
+  uart_send_hex_byte(adc_temp & 0xFF);
+  uart_send_str("\r\n");
+
+  print_temperature(temp_val);
+
+  unsigned char press_msb = i2c_read(BMP280_REG_PRESS_MSB);
+  delay_ms(10);
+  unsigned char press_lsb = i2c_read(BMP280_REG_PRESS_MSB + 1);
+  delay_ms(10);
+  unsigned char press_xlsb = i2c_read(BMP280_REG_PRESS_MSB + 2);
+  delay_ms(10);
+
+  int adc_press = ((int)press_msb << 12) | ((int)press_lsb << 4) | ((int)press_xlsb >> 4);
+
+  int pressure = 101325 + ((adc_press - 0x80000) / 100);
 
   uart_send_str("Pressure: ");
   print_int(pressure / 100);
