@@ -36,7 +36,9 @@ module Top (
       .led(led),
       .uart_rx(uart_rx),
       .uart_tx(uart_tx),
-      .btn(btn1)
+      .btn(btn1),
+      .i2c_sda(i2c_sda),
+      .i2c_scl(i2c_scl)
   );
 
 endmodule

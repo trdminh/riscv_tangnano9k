@@ -281,7 +281,7 @@
       ) i2c_inst (
         .clk(clk),
         .rst(rst),
-        .slave_addr(7'h3C),      // Có thể sửa thành thanh ghi nếu muốn thay đổi addr
+        .slave_addr(7'h76),      // BMP280 I2C address
         .data_in(i2c_data_reg),
         .start_en(i2c_start_en),
         .sda(i2c_sda),

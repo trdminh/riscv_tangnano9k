@@ -83,7 +83,7 @@ module I2C #(
 
                 ADDR: begin
                     sda_en <= 1'b1;
-                    sda_out <= saved_addr[bit_idx + 1]; 
+                    sda_out <= saved_addr[bit_idx]; 
                     if (count == QUARTER_PERIOD)      scl <= 1'b1;
                     else if (count == QUARTER_PERIOD * 3) scl <= 1'b0;
                     else if (count == QUARTER_PERIOD * 4) begin

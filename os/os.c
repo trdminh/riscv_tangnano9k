@@ -9,11 +9,25 @@
 #define TRUE 1
 #define FALSE 0
 
+// BMP280 registers and constants
+#define BMP280_ADDR 0x76
+#define BMP280_REG_ID 0xD0
+#define BMP280_REG_CTRL_MEAS 0xF4
+#define BMP280_REG_PRESS_MSB 0xF7
+#define BMP280_REG_TEMP_MSB 0xFA
+#define BMP280_ID 0x58
+
 void uart_send_str(const char *str);
 void uart_send_char(char ch);
 char uart_read_char();
 void uart_send_hex_byte(char ch);
 void uart_send_hex_nibble(char nibble);
+void i2c_send(unsigned char data);
+unsigned char i2c_is_busy();
+unsigned char i2c_is_done();
+void bmp280_init();
+void bmp280_read_temp();
+void delay_ms(unsigned int ms);
 
 typedef unsigned char bool;
 typedef const char *name;
@@ -78,6 +92,10 @@ bool strings_equal(const char *s1, const char *s2);
 
 void run() {
   *leds = 0xe;
+
+  uart_send_str("=== RISC-V System with BMP280 ===\r\n");
+
+  bmp280_init();
 
   unsigned char active_entity = 1;
   input_buffer inbuf;
@@ -159,6 +177,9 @@ void handle_input(entity_id eid, input_buffer *buf) {
       return;
     }
     action_give(eid, words[1], words[2]);
+  } else if (strings_equal(words[0], "sensor")) {
+    bmp280_read_temp();
+    uart_send_str("\r\n");
   } else {
     uart_send_str("not understood\r\n\r\n");
   }
@@ -398,7 +419,7 @@ void print_help() {
       "\r\ncommand:\r\n  n: go north\r\n  e: go east\r\n  s: go south\r\n  w: "
       "go west\r\n  i: "
       "display inventory\r\n  t <object>: take object\r\n  d <object>: drop "
-      "object\r\n  g <object> <entity>: give object to entity\r\n  help: this "
+      "object\r\n  g <object> <entity>: give object to entity\r\n  sensor: read BMP280\r\n  help: this "
       "message\r\n\r\n");
 }
 
@@ -468,4 +489,54 @@ char uart_read_char() {
   while ((ch = *uart_in) == 0)
     ;
   return ch;
+}
+
+void i2c_send(unsigned char data) {
+  *i2c_data = data;
+  *i2c_ctrl = 0x01;
+  while (i2c_is_busy());
+}
+
+unsigned char i2c_is_busy() {
+  return (*i2c_ctrl & 0x01);
+}
+
+unsigned char i2c_is_done() {
+  return (*i2c_ctrl & 0x02) >> 1;
+}
+
+void delay_ms(unsigned int ms) {
+  volatile unsigned int i, j;
+  for (i = 0; i < ms; i++)
+    for (j = 0; j < 1000; j++);
+}
+
+void bmp280_init() {
+  uart_send_str("Initializing BMP280...\r\n");
+
+  uart_send_str("BMP280 Address: 0x");
+  uart_send_hex_byte(BMP280_ADDR << 1);
+  uart_send_str("\r\n");
+
+  i2c_send(BMP280_REG_CTRL_MEAS);
+  delay_ms(10);
+  i2c_send(0x27);
+
+  uart_send_str("BMP280 Initialized\r\n");
+  uart_send_str("\r\n");
+}
+
+void bmp280_read_temp() {
+  uart_send_str("Reading BMP280 sensor...\r\n");
+
+  i2c_send(BMP280_REG_TEMP_MSB);
+  delay_ms(5);
+
+  uart_send_str("BMP280 Data Read\r\n");
+  uart_send_str("Sensor Address: 0x");
+  uart_send_hex_byte(BMP280_ADDR);
+  uart_send_str("\r\n");
+  uart_send_str("Register: 0x");
+  uart_send_hex_byte(BMP280_REG_TEMP_MSB);
+  uart_send_str("\r\n");
 }
