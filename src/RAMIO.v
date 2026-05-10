@@ -1,306 +1,376 @@
-    //
-    // interface to RAM, UART and LEDs
-    //
+`default_nettype none
 
-    `default_nettype none
-    //`define DBG
+module RAMIO #(
+    parameter ADDR_WIDTH = 16,
+    parameter DATA_WIDTH = 32,
+    parameter DATA_FILE  = "",
 
-    module RAMIO #(
-        parameter ADDR_WIDTH = 16,  // 2**16 = RAM depth in 4 byte words
-        parameter DATA_WIDTH = 32,
-        parameter DATA_FILE = "",
-        parameter CLK_FREQ = 20_250_000,
-        parameter BAUD_RATE = 9600,
-        parameter TOP_ADDR = {(ADDR_WIDTH + 2) {1'b1}},
-        parameter ADDR_LEDS = TOP_ADDR,  // address of leds, 7 bits, rgb 4:6 enabled is off
-        parameter ADDR_UART_OUT = TOP_ADDR - 1,  // send byte address
-        parameter ADDR_UART_IN = TOP_ADDR - 2,  // received byte address, must be read with 'lbu'
-        parameter ADDR_I2C_DATA = TOP_ADDR - 3,
-        parameter ADDR_I2C_CTRL = TOP_ADDR - 4
-    ) (
-        input wire rst,
+    parameter CLK_FREQ   = 20_250_000,
+    parameter BAUD_RATE  = 9600,
 
-        // port A: data memory, read / write byte addressable ram
-        input wire clk,
-        input wire [1:0] weA,  // write enable port A (b01 - byte, b10 - half word, b11 - word)
-        input wire [2:0] reA, // read enable port A (reA[2] sign extended, b01: byte, b10: half word, b11: word)
-        input wire [ADDR_WIDTH+1:0] addrA,  // address on port A in bytes
-        input wire [DATA_WIDTH-1:0] dinA,  // data to ram port A, sign extended byte, half word, word
-        output reg [DATA_WIDTH-1:0] doutA,  // data from ram port A at 'addrA' according to 'reA'
+    parameter TOP_ADDR          = {(ADDR_WIDTH + 2){1'b1}},
 
-        // port B: instruction memory, byte addressed, bottom 2 bits ignored, word aligned
-        input  wire [ADDR_WIDTH+1:0] addrB,  // address on ram port B in bytes
-        output wire [DATA_WIDTH-1:0] doutB,  // data from ram port B
+    parameter ADDR_LEDS         = TOP_ADDR,
+    parameter ADDR_UART_OUT     = TOP_ADDR - 1,
+    parameter ADDR_UART_IN      = TOP_ADDR - 2,
 
-        // I/O mapping of leds
-        output reg [5:0] led,
+    parameter ADDR_I2C_DATA     = TOP_ADDR - 3,
+    parameter ADDR_I2C_CTRL     = TOP_ADDR - 4,
+    parameter ADDR_I2C_STATUS   = TOP_ADDR - 5,
+    parameter ADDR_I2C_REG      = TOP_ADDR - 6,
+    parameter ADDR_I2C_SLAVE    = TOP_ADDR - 7
+)(
+    input  wire rst,
+    input  wire clk,
 
-        // uart
-        output wire uart_tx,
-        input  wire uart_rx,
-        // i2c
-        inout  wire i2c_sda,
-        output wire i2c_scl
+    input  wire [1:0] weA,
+    input  wire [2:0] reA,
+    input  wire [ADDR_WIDTH+1:0] addrA,
+    input  wire [DATA_WIDTH-1:0] dinA,
+    output reg  [DATA_WIDTH-1:0] doutA,
+
+    input  wire [ADDR_WIDTH+1:0] addrB,
+    output wire [DATA_WIDTH-1:0] doutB,
+
+    output reg  [5:0] led,
+
+    output wire uart_tx,
+    input  wire uart_rx,
+
+    inout  wire i2c_sda,
+    output wire i2c_scl
+);
+
+    /* =====================================================
+       RAM
+    ===================================================== */
+
+    reg [ADDR_WIDTH-1:0] ram_addrA;
+    reg [DATA_WIDTH-1:0] ram_dinA;
+    wire [DATA_WIDTH-1:0] ram_doutA;
+    reg [3:0] ram_weA;
+
+    always @(*) begin
+
+        ram_addrA = addrA >> 2;
+
+        ram_weA  = 4'b0000;
+        ram_dinA = 32'h0;
+
+        case (weA)
+
+            2'b01: begin
+                case (addrA[1:0])
+
+                    2'b00: begin
+                        ram_weA = 4'b0001;
+                        ram_dinA[7:0] = dinA[7:0];
+                    end
+
+                    2'b01: begin
+                        ram_weA = 4'b0010;
+                        ram_dinA[15:8] = dinA[7:0];
+                    end
+
+                    2'b10: begin
+                        ram_weA = 4'b0100;
+                        ram_dinA[23:16] = dinA[7:0];
+                    end
+
+                    2'b11: begin
+                        ram_weA = 4'b1000;
+                        ram_dinA[31:24] = dinA[7:0];
+                    end
+                endcase
+            end
+
+            2'b10: begin
+                case (addrA[1:0])
+
+                    2'b00: begin
+                        ram_weA = 4'b0011;
+                        ram_dinA[15:0] = dinA[15:0];
+                    end
+
+                    2'b10: begin
+                        ram_weA = 4'b1100;
+                        ram_dinA[31:16] = dinA[15:0];
+                    end
+                endcase
+            end
+
+            2'b11: begin
+                ram_weA  = 4'b1111;
+                ram_dinA = dinA;
+            end
+        endcase
+    end
+
+    /* =====================================================
+       READ PIPELINE
+    ===================================================== */
+
+    reg [ADDR_WIDTH+1:0] addrA_prev;
+    reg [2:0] reA_prev;
+
+    /* =====================================================
+       UART
+    ===================================================== */
+
+    reg  [7:0] uarttx_data;
+    reg        uarttx_go;
+    wire       uarttx_bsy;
+
+    wire [7:0] uartrx_data;
+    wire       uartrx_dr;
+
+    reg        uartrx_go;
+    reg [7:0]  uartrx_data_read;
+
+    /* =====================================================
+       I2C REGISTERS
+    ===================================================== */
+
+    reg [7:0] i2c_data_reg;
+    reg [7:0] i2c_reg_reg;
+    reg [6:0] i2c_slave_reg;
+
+    reg       i2c_start;
+    reg       i2c_read_en;
+
+    wire [7:0] i2c_read_data;
+
+    wire i2c_busy;
+    wire i2c_done;
+    wire i2c_ack_error;
+
+    /* =====================================================
+       MMIO READ
+    ===================================================== */
+
+    always @(*) begin
+
+        doutA = 32'h0;
+
+        case (addrA_prev)
+
+            ADDR_UART_OUT:
+                doutA = {24'h0, uarttx_data};
+
+            ADDR_UART_IN:
+                doutA = {24'h0, uartrx_data_read};
+
+            ADDR_I2C_DATA:
+                doutA = {24'h0, i2c_read_data};
+
+            ADDR_I2C_REG:
+                doutA = {24'h0, i2c_reg_reg};
+
+            ADDR_I2C_SLAVE:
+                doutA = {25'h0, i2c_slave_reg};
+
+            ADDR_I2C_STATUS:
+                doutA = {
+                    29'b0,
+                    i2c_ack_error,
+                    i2c_done,
+                    i2c_busy
+                };
+
+            default: begin
+
+                case (reA_prev)
+
+                    3'b001: begin
+
+                        case (addrA_prev[1:0])
+
+                            2'b00:
+                                doutA = {{24{1'b0}}, ram_doutA[7:0]};
+
+                            2'b01:
+                                doutA = {{24{1'b0}}, ram_doutA[15:8]};
+
+                            2'b10:
+                                doutA = {{24{1'b0}}, ram_doutA[23:16]};
+
+                            2'b11:
+                                doutA = {{24{1'b0}}, ram_doutA[31:24]};
+                        endcase
+                    end
+
+                    3'b111:
+                        doutA = ram_doutA;
+
+                    default:
+                        doutA = 32'h0;
+                endcase
+            end
+        endcase
+    end
+
+    /* =====================================================
+       SEQUENTIAL
+    ===================================================== */
+
+    always @(posedge clk) begin
+
+        if (rst) begin
+
+            led <= 6'b111111;
+
+            uarttx_go <= 0;
+            uarttx_data <= 0;
+
+            uartrx_go <= 1;
+            uartrx_data_read <= 0;
+
+            i2c_start <= 0;
+            i2c_read_en <= 0;
+
+            i2c_data_reg <= 0;
+            i2c_reg_reg <= 0;
+            i2c_slave_reg <= 7'h76;
+
+        end else begin
+
+            i2c_start <= 1'b0;
+
+            reA_prev   <= reA;
+            addrA_prev <= addrA;
+
+            /* UART RX */
+
+            if (uartrx_dr && uartrx_go) begin
+                uartrx_data_read <= uartrx_data;
+                uartrx_go <= 0;
+            end
+
+            if (!uartrx_go)
+                uartrx_go <= 1;
+
+            /* UART TX */
+
+            if (!uarttx_bsy)
+                uarttx_go <= 0;
+
+            if (addrA == ADDR_UART_OUT && weA == 2'b01) begin
+                uarttx_data <= dinA[7:0];
+                uarttx_go <= 1;
+            end
+
+            /* LED */
+
+            if (addrA == ADDR_LEDS && weA == 2'b01)
+                led <= dinA[5:0];
+
+            /* I2C DATA */
+
+            if (addrA == ADDR_I2C_DATA && weA == 2'b01)
+                i2c_data_reg <= dinA[7:0];
+
+            /* I2C REG */
+
+            if (addrA == ADDR_I2C_REG && weA == 2'b01)
+                i2c_reg_reg <= dinA[7:0];
+
+            /* I2C SLAVE */
+
+            if (addrA == ADDR_I2C_SLAVE && weA == 2'b01)
+                i2c_slave_reg <= dinA[6:0];
+
+            /* I2C CTRL */
+
+            if (addrA == ADDR_I2C_CTRL && weA == 2'b01) begin
+
+                i2c_read_en <= dinA[1];
+
+                if (dinA[0])
+                    i2c_start <= 1'b1;
+            end
+        end
+    end
+
+    /* =====================================================
+       RAM
+    ===================================================== */
+
+    RAM #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .DATA_FILE(DATA_FILE)
+    ) ram (
+        .clk(clk),
+
+        .weA(ram_weA),
+
+        .addrA(ram_addrA),
+        .dinA(ram_dinA),
+        .doutA(ram_doutA),
+
+        .addrB(addrB[ADDR_WIDTH+1:2]),
+        .doutB(doutB)
     );
 
-      // RAM
-      reg [ADDR_WIDTH-1:0] ram_addrA;  // address of ram port A
-      reg [DATA_WIDTH-1:0] ram_dinA;  // data from ram port A
-      wire [DATA_WIDTH-1:0] ram_doutA;  // data to ram port A
-      reg [3:0] ram_weA;  // which bytes of the 'dinA' is written to ram port A
-      
-      // I2C
-      reg [7:0] i2c_data_reg;
-      reg       i2c_start_en;
-      reg       i2c_read_en;
-      wire      i2c_busy;
-      wire      i2c_done;
-      wire [7:0] i2c_data_out;
-      // write
-      reg [1:0] addr_lower_w;
+    /* =====================================================
+       UART
+    ===================================================== */
 
+    UartTx #(
+        .CLK_FREQ(CLK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) uarttx (
+        .rst(rst),
+        .clk(clk),
+        .data(uarttx_data),
+        .go(uarttx_go),
+        .tx(uart_tx),
+        .bsy(uarttx_bsy)
+    );
 
+    UartRx #(
+        .CLK_FREQ(CLK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) uartrx (
+        .rst(rst),
+        .clk(clk),
+        .rx(uart_rx),
+        .go(uartrx_go),
+        .data(uartrx_data),
+        .dr(uartrx_dr)
+    );
 
-      always @(*) begin
-        ram_addrA = addrA >> 2;
-        addr_lower_w = addrA & 2'b11;
-        ram_weA = 0;
-        ram_dinA = 0;
-        case (weA)
-          2'b00: begin  // none
-            ram_weA = 4'b0000;
-          end
-          2'b01: begin  // byte
-            case (addr_lower_w)
-              2'b00: begin
-                ram_weA = 4'b0001;
-                ram_dinA[7:0] = dinA[7:0];
-              end
-              2'b01: begin
-                ram_weA = 4'b0010;
-                ram_dinA[15:8] = dinA[7:0];
-              end
-              2'b10: begin
-                ram_weA = 4'b0100;
-                ram_dinA[23:16] = dinA[7:0];
-              end
-              2'b11: begin
-                ram_weA = 4'b1000;
-                ram_dinA[31:24] = dinA[7:0];
-              end
-            endcase
-          end
-          2'b10: begin  // half word
-            case (addr_lower_w)
-              2'b00: begin
-                ram_weA = 4'b0011;
-                ram_dinA[15:0] = dinA[15:0];
-              end
-              2'b01: ;  // ? error
-              2'b10: begin
-                ram_weA = 4'b1100;
-                ram_dinA[31:16] = dinA[15:0];
-              end
-              2'b11: ;  // ? error
-            endcase
-          end
-          2'b11: begin  // word
-            // ? assert(addr_lower_w==0)
-            ram_weA  = 4'b1111;
-            ram_dinA = dinA;
-          end
-        endcase
-      end
-      // read
-      reg [ADDR_WIDTH+1:0] addrA_prev;  // address used in previous cycle
-      reg [2:0] reA_prev; // 'reA' from previous cycle used in this cycle (due to one cycle delay of data ready)
+    /* =====================================================
+       I2C
+    ===================================================== */
 
-      // uarttx
-      reg [7:0] uarttx_data;  // data being written
-      reg uarttx_go;  // enabled to start sending and disabled to acknowledge that data has been sent
-      wire uarttx_bsy;  // enabled if uart is sending data
-
-      // uartrx
-      wire uartrx_dr;  // data ready
-      wire [7:0] uartrx_data;  // data that is being read
-      reg uartrx_go;  // enabled to start receiving and disabled to acknowledge that data has been read
-      reg [7:0] uartrx_data_read; // complete data from 'uartrx_data' when 'uartrx_dr' (data ready) enabled
-
-      always @(*) begin
-        // Mặc định doutA = 0 để tránh tạo latch
-        doutA = 32'h0; 
-
-        if (addrA_prev == ADDR_UART_OUT && reA_prev == 3'b001) begin
-          // read unsigned byte from uart_tx
-          doutA = {{24{1'b0}}, uarttx_data};
-        end else if (addrA_prev == ADDR_UART_IN && reA_prev == 3'b001) begin
-          // read unsigned byte from uart_rx
-          doutA = {{24{1'b0}}, uartrx_data_read};
-        end 
-        // --- THÊM I2C DATA TẠI ĐÂY ---
-        else if (addrA_prev == ADDR_I2C_DATA && reA_prev == 3'b001) begin
-          doutA = {{24{1'b0}}, i2c_data_reg};
-        end 
-        // --- THÊM I2C CONTROL/STATUS TẠI ĐÂY ---
-        else if (addrA_prev == ADDR_I2C_CTRL && reA_prev == 3'b001) begin
-          doutA = {{28{1'b0}}, i2c_done, i2c_busy, 1'b0, i2c_read_en};
-        end
-        // --- THÊM I2C READ DATA TẠI ĐÂY ---
-        else if (addrA_prev == ADDR_I2C_DATA && reA_prev == 3'b001 && i2c_read_en) begin
-          doutA = {{24{1'b0}}, i2c_data_out};
-        end 
-        // ----------------------------
-        else begin
-          casex (reA_prev)  // read size
-            3'bx01: begin  // byte
-              case (addrA_prev[1:0])
-                2'b00: begin
-                  doutA = reA_prev[2] ? {{24{ram_doutA[7]}}, ram_doutA[7:0]} : {{24{1'b0}}, ram_doutA[7:0]};
-                end
-                2'b01: begin
-                  doutA = reA_prev[2] ? {{24{ram_doutA[15]}}, ram_doutA[15:8]} : {{24{1'b0}}, ram_doutA[15:8]};
-                end
-                2'b10: begin
-                  doutA = reA_prev[2] ? {{24{ram_doutA[23]}}, ram_doutA[23:16]} : {{24{1'b0}}, ram_doutA[23:16]};
-                end
-                2'b11: begin
-                  doutA = reA_prev[2] ? {{24{ram_doutA[31]}}, ram_doutA[31:24]} : {{24{1'b0}}, ram_doutA[31:24]};
-                end
-              endcase
-            end
-            3'bx10: begin  // half word
-              case (addrA_prev[1:0])
-                2'b00: begin
-                  doutA = reA_prev[2] ? {{16{ram_doutA[15]}}, ram_doutA[15:0]} : {{16{1'b0}}, ram_doutA[15:0]};
-                end
-                2'b01: doutA = 0;  // ? error
-                2'b10: begin
-                  doutA = reA_prev[2] ? {{16{ram_doutA[31]}}, ram_doutA[31:16]} : {{16{1'b0}}, ram_doutA[31:16]};
-                end
-                2'b11: doutA = 0;  // ? error
-              endcase
-            end
-            3'b111: begin  // word
-              doutA = ram_doutA;
-            end
-            default: doutA = 0;
-          endcase
-        end
-      end
-
-      always @(posedge clk) begin
-        if (rst) begin
-          led <= 4'b1111;  // turn off all leds
-          uarttx_data <= 0;
-          uarttx_go <= 0;
-          uartrx_data_read <= 0;
-         uartrx_go <= 1;
-          i2c_start_en <= 0;
-          i2c_data_reg <= 0;
-        end else begin
-          if (i2c_start_en) i2c_start_en <= 1'b0;
-
-            // Write data to I2C
-          if (addrA == ADDR_I2C_DATA && weA == 2'b01) begin
-            i2c_data_reg <= dinA[7:0];
-          end
-          if (addrA == ADDR_I2C_CTRL && weA == 2'b01) begin
-            if (dinA[0]) begin
-              i2c_start_en <= 1'b1;
-              i2c_read_en <= dinA[1];
-            end
-          end
-          led[5] <= uart_tx;
-          led[4] <= uart_rx;
-
-          reA_prev <= reA;
-          addrA_prev <= addrA;
-          // if previous command was a read from uart then reset the read data
-          if (addrA_prev == ADDR_UART_IN && reA_prev == 3'b001) begin
-            uartrx_data_read <= 0;
-          end
-          // if uart has data ready then copy the data from uart and acknowledge (uartrx_go = 0)
-          if (uartrx_dr && uartrx_go) begin
-            uartrx_data_read <= uartrx_data;
-            uartrx_go <= 0;
-          end
-          // if previous cycle acknowledged receiving data then start receiving next data (uartrx_go = 1)
-          if (uartrx_go == 0) begin
-            uartrx_go <= 1;
-          end
-          // if uart done sending data then acknowledge (uarttx_go = 0)
-          if (!uarttx_bsy && uarttx_go) begin
-            uarttx_data <= 0;
-            uarttx_go   <= 0;
-          end
-          // if writing to leds
-          if (addrA == ADDR_LEDS && weA == 2'b01) begin
-            led <= dinA[3:0];
-          end
-          // note: with 'else' uses 5 less LUTs and 1 extra F7 Mux 
-          // if writing to uart
-          if (addrA == ADDR_UART_OUT && weA == 2'b01) begin
-            uarttx_data <= dinA[7:0];
-            uarttx_go   <= 1;
-          end
-        end
-      end
-      
-
-    
-      RAM #(
-          .ADDR_WIDTH(ADDR_WIDTH),
-          .DATA_FILE (DATA_FILE)
-      ) ram (
-          .clk  (clk),
-          .weA  (ram_weA),
-          .addrA(ram_addrA),
-          .dinA (ram_dinA),
-          .doutA(ram_doutA),
-          .addrB(addrB[ADDR_WIDTH+1:2]),
-          .doutB(doutB)
-      );
-
-      UartTx #(
-          .CLK_FREQ (CLK_FREQ),
-          .BAUD_RATE(BAUD_RATE)
-      ) uarttx (
-          .rst(rst),
-          .clk(clk),
-          .data(uarttx_data),  // data to send
-          .go(uarttx_go),  // enable to start transmission, disable after 'data' has been read
-          .tx(uart_tx),  // uart tx wire
-          .bsy(uarttx_bsy)  // enabled while sending
-      );
-
-      UartRx #(
-          .CLK_FREQ (CLK_FREQ),
-          .BAUD_RATE(BAUD_RATE)
-      ) uartrx (
-          .rst(rst),
-          .clk(clk),
-          .rx(uart_rx),  // uart rx wire
-          .go(uartrx_go),  // enable to start receiving, disable to acknowledge 'dr'
-          .data(uartrx_data),  // current data being received, is incomplete until 'dr' is enabled
-          .dr(uartrx_dr)  // enabled when data is ready
-      );
-      I2C #(
+    I2C #(
         .CLK_FREQ(CLK_FREQ),
         .I2C_FREQ(100_000)
-      ) i2c_inst (
+    ) i2c_inst (
+
         .clk(clk),
         .rst(rst),
-        .slave_addr(7'h76),
-        .data_in(i2c_data_reg),
-        .start_en(i2c_start_en),
+
+        .start(i2c_start),
+
+        .slave_addr(i2c_slave_reg),
+
+        .reg_addr(i2c_reg_reg),
+
+        .write_data(i2c_data_reg),
+
         .read_en(i2c_read_en),
-        .sda(i2c_sda),
-        .scl(i2c_scl),
+
+        .read_data(i2c_read_data),
+
         .busy(i2c_busy),
         .done(i2c_done),
-        .data_out(i2c_data_out)
-      );
-    endmodule
+        .ack_error(i2c_ack_error),
 
-    `undef DBG
-    `default_nettype wire
+        .sda(i2c_sda),
+        .scl(i2c_scl)
+    );
+
+endmodule
+
+`default_nettype wire

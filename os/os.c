@@ -19,107 +19,52 @@
 #define TRUE  1
 #define FALSE 0
 
-void uart_send_str(const char *str);
+/* =========================================================
+   MEMORY MAPPED IO
+========================================================= */
+
+volatile unsigned char *leds      = (unsigned char *)0x7fff;
+volatile unsigned char *uart_out  = (unsigned char *)0x7ffe;
+volatile unsigned char *uart_in   = (unsigned char *)0x7ffd;
+
+volatile unsigned char *i2c_data  = (unsigned char *)0x7ffc;
+volatile unsigned char *i2c_ctrl  = (unsigned char *)0x7ffb;
+volatile unsigned char *i2c_reg   = (unsigned char *)0x7ffa;
+
+/* =========================================================
+   UART
+========================================================= */
+
 void uart_send_char(char ch);
+void uart_send_str(const char *str);
 char uart_read_char();
 
-void uart_send_hex_byte(unsigned char ch);
 void uart_send_hex_nibble(unsigned char nibble);
+void uart_send_hex_byte(unsigned char ch);
 
 void print_int(int num);
 
 void delay_ms(unsigned int ms);
 
 /* =========================================================
-   UART
+   I2C
 ========================================================= */
 
-void uart_send_char(const char ch) {
-    while (*uart_out);
-    *uart_out = ch;
-}
+void i2c_wait();
 
-void uart_send_str(const char *str) {
-    while (*str) {
-        uart_send_char(*str++);
-    }
-}
+void i2c_write_reg(
+    unsigned char slave,
+    unsigned char reg,
+    unsigned char value
+);
 
-char uart_read_char() {
-    char ch;
-    while ((ch = *uart_in) == 0);
-    return ch;
-}
-
-void uart_send_hex_nibble(unsigned char nibble) {
-    if (nibble < 10)
-        uart_send_char('0' + nibble);
-    else
-        uart_send_char('A' + (nibble - 10));
-}
-
-void uart_send_hex_byte(unsigned char ch) {
-    uart_send_hex_nibble((ch >> 4) & 0x0F);
-    uart_send_hex_nibble(ch & 0x0F);
-}
-
-void print_int(int num) {
-    char buf[12];
-    int i = 0;
-
-    if (num == 0) {
-        uart_send_char('0');
-        return;
-    }
-
-    if (num < 0) {
-        uart_send_char('-');
-        num = -num;
-    }
-
-    while (num > 0) {
-        buf[i++] = '0' + (num % 10);
-        num /= 10;
-    }
-
-    while (i > 0) {
-        uart_send_char(buf[--i]);
-    }
-}
-
-void delay_ms(unsigned int ms) {
-    volatile unsigned int i, j;
-
-    for (i = 0; i < ms; i++) {
-        for (j = 0; j < 1000; j++);
-    }
-}
+unsigned char i2c_read_reg(
+    unsigned char slave,
+    unsigned char reg
+);
 
 /* =========================================================
-   LOW LEVEL I2C
-========================================================= */
-
-void i2c_wait() {
-    while (*i2c_ctrl & 0x01);
-}
-
-void i2c_write_byte(unsigned char data) {
-    *i2c_data = data;
-    *i2c_ctrl = 0x01;
-
-    i2c_wait();
-}
-
-unsigned char i2c_read_byte() {
-    *i2c_ctrl = 0x03;
-
-    i2c_wait();
-
-    return *i2c_data;
-}
-
-/* =========================================================
-   BMP280 DRIVER
+   BMP280
 ========================================================= */
 
 unsigned short dig_T1;
@@ -128,94 +73,240 @@ short dig_T3;
 
 long t_fine;
 
-/* ---------- Register Read/Write ---------- */
+/* =========================================================
+   UART
+========================================================= */
 
-void bmp280_write_reg(unsigned char reg, unsigned char value) {
+void uart_send_char(char ch) {
 
-    /* slave addr + write */
-    i2c_write_byte((BMP280_ADDR << 1) | 0);
+    while (*uart_out);
 
-    /* register */
-    i2c_write_byte(reg);
-
-    /* value */
-    i2c_write_byte(value);
+    *uart_out = ch;
 }
 
-unsigned char bmp280_read_reg(unsigned char reg) {
+void uart_send_str(const char *str) {
 
-    unsigned char value;
+    while (*str) {
 
-    /* write phase */
-    i2c_write_byte((BMP280_ADDR << 1) | 0);
+        uart_send_char(*str++);
 
-    i2c_write_byte(reg);
-
-    /* read phase */
-    i2c_write_byte((BMP280_ADDR << 1) | 1);
-
-    value = i2c_read_byte();
-
-    return value;
+    }
 }
 
-/* ---------- Calibration ---------- */
+char uart_read_char() {
+
+    char ch;
+
+    while ((ch = *uart_in) == 0);
+
+    return ch;
+}
+
+void uart_send_hex_nibble(unsigned char nibble) {
+
+    if (nibble < 10)
+        uart_send_char('0' + nibble);
+    else
+        uart_send_char('A' + (nibble - 10));
+}
+
+void uart_send_hex_byte(unsigned char ch) {
+
+    uart_send_hex_nibble((ch >> 4) & 0x0F);
+
+    uart_send_hex_nibble(ch & 0x0F);
+}
+
+void print_int(int num) {
+
+    char buf[12];
+
+    int i = 0;
+
+    if (num == 0) {
+        uart_send_char('0');
+        return;
+    }
+
+    if (num < 0) {
+
+        uart_send_char('-');
+
+        num = -num;
+    }
+
+    while (num > 0) {
+
+        buf[i++] = '0' + (num % 10);
+
+        num /= 10;
+    }
+
+    while (i > 0) {
+
+        uart_send_char(buf[--i]);
+    }
+}
+
+void delay_ms(unsigned int ms) {
+
+    volatile unsigned int i;
+    volatile unsigned int j;
+
+    for (i = 0; i < ms; i++) {
+
+        for (j = 0; j < 1000; j++);
+
+    }
+}
+
+/* =========================================================
+   LOW LEVEL I2C
+========================================================= */
+
+/*
+i2c_ctrl bit mapping
+
+bit0 = start
+bit1 = read_en
+
+status:
+bit0 = busy
+bit1 = done
+bit2 = ack_error
+*/
+
+void i2c_wait() {
+
+    while ((*i2c_ctrl) & 0x01);
+}
+
+void i2c_write_reg(
+    unsigned char slave,
+    unsigned char reg,
+    unsigned char value
+) {
+
+    /* register address */
+
+    *i2c_reg = reg;
+
+    /* write data */
+
+    *i2c_data = value;
+
+    /*
+       start = 1
+       read_en = 0
+    */
+
+    *i2c_ctrl = 0x01;
+
+    i2c_wait();
+}
+
+unsigned char i2c_read_reg(
+    unsigned char slave,
+    unsigned char reg
+) {
+
+    /*
+       set register address
+    */
+
+    *i2c_reg = reg;
+
+    /*
+       start = 1
+       read_en = 1
+    */
+
+    *i2c_ctrl = 0x03;
+
+    i2c_wait();
+
+    return *i2c_data;
+}
+
+/* =========================================================
+   BMP280 CALIBRATION
+========================================================= */
 
 unsigned short bmp280_read16_LE(unsigned char reg) {
 
     unsigned char lsb;
     unsigned char msb;
 
-    lsb = bmp280_read_reg(reg);
-    msb = bmp280_read_reg(reg + 1);
+    lsb = i2c_read_reg(BMP280_ADDR, reg);
+
+    msb = i2c_read_reg(BMP280_ADDR, reg + 1);
 
     return ((unsigned short)msb << 8) | lsb;
 }
 
 short bmp280_readS16_LE(unsigned char reg) {
+
     return (short)bmp280_read16_LE(reg);
 }
 
 void bmp280_read_calibration() {
 
     dig_T1 = bmp280_read16_LE(0x88);
+
     dig_T2 = bmp280_readS16_LE(0x8A);
+
     dig_T3 = bmp280_readS16_LE(0x8C);
 
     uart_send_str("Calibration Loaded\r\n");
 }
 
-/* ---------- Init ---------- */
+/* =========================================================
+   BMP280 INIT
+========================================================= */
 
 void bmp280_init() {
 
-    uart_send_str("=== BMP280 INIT ===\r\n");
-
     unsigned char id;
 
-    id = bmp280_read_reg(BMP280_REG_ID);
+    uart_send_str("=== BMP280 INIT ===\r\n");
+
+    id = i2c_read_reg(BMP280_ADDR, BMP280_REG_ID);
 
     uart_send_str("Chip ID: 0x");
+
     uart_send_hex_byte(id);
+
     uart_send_str("\r\n");
 
     if (id != BMP280_ID) {
+
         uart_send_str("BMP280 NOT FOUND\r\n");
+
         return;
     }
 
     uart_send_str("BMP280 DETECTED\r\n");
 
-    bmp280_write_reg(BMP280_REG_CTRL_MEAS, 0x27);
+    i2c_write_reg(
+        BMP280_ADDR,
+        BMP280_REG_CTRL_MEAS,
+        0x27
+    );
 
-    bmp280_write_reg(BMP280_REG_CONFIG, 0xA0);
+    i2c_write_reg(
+        BMP280_ADDR,
+        BMP280_REG_CONFIG,
+        0xA0
+    );
 
     bmp280_read_calibration();
 
     uart_send_str("BMP280 READY\r\n\r\n");
 }
 
-/* ---------- Temperature ---------- */
+/* =========================================================
+   BMP280 TEMPERATURE
+========================================================= */
 
 long bmp280_read_raw_temp() {
 
@@ -225,27 +316,49 @@ long bmp280_read_raw_temp() {
 
     long adc_T;
 
-    msb  = bmp280_read_reg(BMP280_REG_TEMP_MSB);
-    lsb  = bmp280_read_reg(BMP280_REG_TEMP_MSB + 1);
-    xlsb = bmp280_read_reg(BMP280_REG_TEMP_MSB + 2);
+    msb =
+        i2c_read_reg(
+            BMP280_ADDR,
+            BMP280_REG_TEMP_MSB
+        );
 
-    adc_T = ((long)msb << 12) |
-            ((long)lsb << 4)  |
-            ((long)xlsb >> 4);
+    lsb =
+        i2c_read_reg(
+            BMP280_ADDR,
+            BMP280_REG_TEMP_MSB + 1
+        );
+
+    xlsb =
+        i2c_read_reg(
+            BMP280_ADDR,
+            BMP280_REG_TEMP_MSB + 2
+        );
+
+    adc_T =
+        ((long)msb << 12) |
+        ((long)lsb << 4)  |
+        ((long)xlsb >> 4);
 
     return adc_T;
 }
 
 long bmp280_compensate_temp(long adc_T) {
 
-    long var1, var2, T;
+    long var1;
+    long var2;
+    long T;
 
-    var1 = ((((adc_T >> 3) - ((long)dig_T1 << 1))) *
-             ((long)dig_T2)) >> 11;
+    var1 =
+        ((((adc_T >> 3) -
+        ((long)dig_T1 << 1))) *
+        ((long)dig_T2)) >> 11;
 
-    var2 = (((((adc_T >> 4) - ((long)dig_T1)) *
-              ((adc_T >> 4) - ((long)dig_T1))) >> 12) *
-              ((long)dig_T3)) >> 14;
+    var2 =
+        (((((adc_T >> 4) -
+        ((long)dig_T1)) *
+        ((adc_T >> 4) -
+        ((long)dig_T1))) >> 12) *
+        ((long)dig_T3)) >> 14;
 
     t_fine = var1 + var2;
 
@@ -302,9 +415,13 @@ void run() {
 
     while (1) {
 
-        uart_send_str("Press ENTER to read sensor...\r\n");
+        uart_send_str(
+            "Press ENTER to read sensor...\r\n"
+        );
 
-        while (uart_read_char() != CHAR_CARRIAGE_RETURN);
+        while (
+            uart_read_char() != CHAR_CARRIAGE_RETURN
+        );
 
         uart_send_str("\r\n");
 
