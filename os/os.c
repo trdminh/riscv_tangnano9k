@@ -146,8 +146,8 @@ void delay_ms(unsigned int ms) {
 void run()
 {
   bmp280_init();
-while(1) {
-    bmp280_read_temp();
-    delay_ms(1000);   // đọc mỗi giây
-}
+  while(1) {
+      bmp280_read_temp();
+      delay_ms(1000);   // đọc mỗi giây
+  }
 }
