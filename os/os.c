@@ -29,7 +29,6 @@ void bmp280_init();
 void bmp280_read_temp();
 void delay_ms(unsigned int ms);
 
-typedef unsigned char bool;
 typedef const char *name;
 typedef unsigned char location_id;
 typedef unsigned char object_id;
@@ -75,9 +74,9 @@ static const char *exit_names[] = {"north", "east", "south",
 
 void print_help();
 void print_location(location_id lid, entity_id eid_exclude_from_output);
-bool add_object_to_list(object_id list[], unsigned list_len, object_id oid);
+unsigned char add_object_to_list(object_id list[], unsigned list_len, object_id oid);
 void remove_object_from_list_by_index(object_id list[], unsigned ix);
-bool add_entity_to_list(entity_id list[], unsigned list_len, entity_id eid);
+unsigned char add_entity_to_list(entity_id list[], unsigned list_len, entity_id eid);
 void remove_entity_from_list_by_index(entity_id list[], unsigned ix);
 void remove_entity_from_list(entity_id list[], unsigned list_len,
                              entity_id eid);
@@ -88,7 +87,7 @@ void action_drop(entity_id eid, name obj);
 void action_take(entity_id eid, name obj);
 void input(input_buffer *buf);
 void handle_input(entity_id eid, input_buffer *buf);
-bool strings_equal(const char *s1, const char *s2);
+unsigned char strings_equal(const char *s1, const char *s2);
 
 void run() {
   *leds = 0xe;
@@ -192,7 +191,7 @@ void print_location(location_id lid, entity_id eid_exclude_from_output) {
   uart_send_str("\r\nu c: ");
 
   // print objects in location
-  bool add_list_sep = FALSE;
+  unsigned char add_list_sep = FALSE;
   const object_id *lso = loc->objects;
   for (unsigned i = 0; i < LOCATION_MAX_OBJECTS; i++) {
     const object_id oid = lso[i];
@@ -251,7 +250,7 @@ void print_location(location_id lid, entity_id eid_exclude_from_output) {
 
 void action_inventory(entity_id eid) {
   uart_send_str("u have: ");
-  bool add_list_sep = FALSE;
+  unsigned char add_list_sep = FALSE;
   const object_id *lso = entities[eid].objects;
   for (unsigned i = 0; i < ENTITY_MAX_OBJECTS; i++) {
     const object_id oid = lso[i];
@@ -280,7 +279,7 @@ void remove_object_from_list_by_index(object_id list[], unsigned ix) {
   }
 }
 
-bool add_object_to_list(object_id list[], unsigned list_len, object_id oid) {
+unsigned char add_object_to_list(object_id list[], unsigned list_len, object_id oid) {
   // list_len - 1 since last element has to be 0
   for (unsigned i = 0; i < list_len - 1; i++) {
     if (list[i])
@@ -293,7 +292,7 @@ bool add_object_to_list(object_id list[], unsigned list_len, object_id oid) {
   return FALSE;
 }
 
-bool add_entity_to_list(entity_id list[], unsigned list_len, entity_id eid) {
+unsigned char add_entity_to_list(entity_id list[], unsigned list_len, entity_id eid) {
   // list_len - 1 since last element has to be 0
   for (unsigned i = 0; i < list_len - 1; i++) {
     if (list[i])
@@ -446,7 +445,7 @@ void input(input_buffer *buf) {
   }
 }
 
-bool strings_equal(const char *s1, const char *s2) {
+unsigned char strings_equal(const char *s1, const char *s2) {
   while (1) {
     if (*s1 - *s2)
       return FALSE;
