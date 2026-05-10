@@ -31,8 +31,8 @@ IO_PORT "btn1" IO_TYPE=LVCMOS18;
 IO_LOC  "sys_rst_n" 4;
 IO_PORT "sys_rst_n" IO_TYPE=LVCMOS18 PULL_MODE=UP;
 
-IO_LOC  "i2c_scl" 48;
+IO_LOC  "i2c_scl" 25;
 IO_PORT "i2c_scl" DRIVE=8 IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
-IO_LOC  "i2c_sda" 49;
+IO_LOC  "i2c_sda" 26;
 IO_PORT "i2c_sda" DRIVE=8 IO_TYPE=LVCMOS33 PULL_MODE=UP;

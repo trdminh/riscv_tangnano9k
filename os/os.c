@@ -10,7 +10,7 @@
 #define FALSE 0
 
 // BMP280 registers and constants
-#define BMP280_ADDR 0x76
+#define BMP280_ADDR 0xEC
 #define BMP280_REG_ID 0xD0
 #define BMP280_REG_CTRL_MEAS 0xF4
 #define BMP280_REG_PRESS_MSB 0xF7
