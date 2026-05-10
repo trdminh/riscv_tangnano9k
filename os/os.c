@@ -485,21 +485,27 @@ void uart_send_char(const char ch) {
 }
 
 void print_int(int num) {
+  unsigned char digits[12];
+  int len = 0;
+
+  if (num == 0) {
+    uart_send_char('0');
+    return;
+  }
+
   if (num < 0) {
     uart_send_char('-');
     num = -num;
   }
 
-  int divisor = 1;
-  int temp = num;
-  while (temp >= 10) {
-    divisor *= 10;
-    temp /= 10;
+  unsigned int n = (unsigned int)num;
+  while (n > 0) {
+    digits[len++] = '0' + (n % 10);
+    n = n / 10;
   }
 
-  while (divisor > 0) {
-    uart_send_char('0' + (num / divisor) % 10);
-    divisor /= 10;
+  while (len > 0) {
+    uart_send_char(digits[--len]);
   }
 }
 
