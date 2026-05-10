@@ -9,7 +9,9 @@ module Top (
     output wire [5:0] led,
     input wire uart_rx,
     output wire uart_tx,
-    input wire btn1
+    input wire btn1,
+    inout  wire i2c_sda,
+    output wire i2c_scl
 );
 
   // assign uart_tx = uart_rx;

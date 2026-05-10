@@ -13,7 +13,9 @@ module SoC #(
     output wire [5:0] led,
     input wire uart_rx,
     output wire uart_tx,
-    input wire btn
+    input wire btn,
+    inout  wire i2c_sda,
+    output wire i2c_scl
 );
 
   reg [31:0] pc;  // program counter, byte addressed, next instruction to fetch
@@ -290,7 +292,9 @@ module SoC #(
       // I/O
       .led(led),
       .uart_tx(uart_tx),
-      .uart_rx(uart_rx)
+      .uart_rx(uart_rx),
+      .i2c_sda(i2c_sda),
+      .i2c_scl(i2c_scl)
   );
 
 endmodule

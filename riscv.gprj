@@ -6,6 +6,7 @@
     <Device name="GW1NR-9C" pn="GW1NR-LV9QN88PC6/I5">gw1nr9c-004</Device>
     <FileList>
         <File path="src/Configuration.v" type="file.verilog" enable="1"/>
+        <File path="src/I2C.v" type="file.verilog" enable="1"/>
         <File path="src/RAM.v" type="file.verilog" enable="1"/>
         <File path="src/RAMIO.v" type="file.verilog" enable="1"/>
         <File path="src/Registers.v" type="file.verilog" enable="1"/>
