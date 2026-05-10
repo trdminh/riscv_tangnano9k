@@ -18,19 +18,6 @@
 
 #define TRUE  1
 #define FALSE 0
-
-/* =========================================================
-   MEMORY MAPPED IO
-========================================================= */
-
-volatile unsigned char *leds      = (unsigned char *)0x7fff;
-volatile unsigned char *uart_out  = (unsigned char *)0x7ffe;
-volatile unsigned char *uart_in   = (unsigned char *)0x7ffd;
-
-volatile unsigned char *i2c_data  = (unsigned char *)0x7ffc;
-volatile unsigned char *i2c_ctrl  = (unsigned char *)0x7ffb;
-volatile unsigned char *i2c_reg   = (unsigned char *)0x7ffa;
-
 /* =========================================================
    UART
 ========================================================= */
